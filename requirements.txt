@@ -1,0 +1,4 @@
+PySide6==6.6.0
+mss==10.0.0
+parakeet-ctc==0.0.3
+requests>=2.31.0
