@@ -146,7 +146,7 @@ class SessionManager:
         logger.info(f'Loaded session {session_id}: {session.name}')
         return session
     
-    def start_session(self, name: str, auto_record: bool = True) -> Session:
+    def start_session(self, name: str, auto_record: bool = True, mic: bool = True, mic_device: int = None, system_device: int = None) -> Session:
         """Create and start a new session.
         
         Args:
@@ -162,7 +162,8 @@ class SessionManager:
         
         # Auto-start recording if enabled
         if auto_record:
-            self.start_recording(label='main', monitor=False)
+            # By default, capture system audio along with optional microphone
+            self.start_recording(label='main', monitor=True, mic=mic, mic_device=mic_device, system_device=system_device)
         
         logger.info(f'Started session {session.id}: {session.name}')
         return session
@@ -223,7 +224,7 @@ class SessionManager:
             start_time = session.start_time or datetime.now()
             self.current_timeline = Timeline(session.id, start_time)
     
-    def start_recording(self, label: str = 'recording', monitor: bool = False) -> str:
+    def start_recording(self, label: str = 'recording', monitor: bool = False, mic: bool = True, mic_device: int = None) -> str:
         """Start recording audio in the current session.
         
         Args:
@@ -240,9 +241,9 @@ class SessionManager:
         if self.current_timeline:
             self.current_timeline.add_audio_start(label)
         
-        return self.current_session.start_recording(label, monitor)
+        return self.current_session.start_recording(label, monitor, mic, mic_device)
     
-    def stop_recording(self, label: str = 'recording') -> Optional[str]:
+    def stop_recording(self, label: str = 'recording') -> Optional[list]:
         """Stop recording audio in the current session.
         
         Args:
@@ -254,13 +255,17 @@ class SessionManager:
         if not self.current_session:
             return None
         
-        output_path = self.current_session.stop_recording(label)
-        
+        output_paths = self.current_session.stop_recording(label)
+
         # Track in timeline
-        if self.current_timeline and output_path:
-            self.current_timeline.add_audio_end(output_path, label)
-        
-        return output_path
+        if self.current_timeline and output_paths:
+            if isinstance(output_paths, list):
+                for p in output_paths:
+                    self.current_timeline.add_audio_end(p, label)
+            else:
+                self.current_timeline.add_audio_end(output_paths, label)
+
+        return output_paths
     
     def capture_screenshot(self, label: str = 'screenshot') -> str:
         """Capture a screenshot in the current session.

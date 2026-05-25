@@ -130,7 +130,7 @@ class Session:
         
         logger.info(f'Session {self.id} stopped: {self.name}')
     
-    def start_recording(self, label: str = 'recording', monitor: bool = False) -> str:
+    def start_recording(self, label: str = 'recording', monitor: bool = False, mic: bool = True, mic_device: int = None, monitor_source: str = None, system_device: int = None) -> str:
         """Start audio recording.
         
         Args:
@@ -146,14 +146,13 @@ class Session:
         if not self.start_time:
             self.start()
         
-        if monitor:
-            self.audio_recorder.start_recording(monitor=True)
-        else:
-            self.audio_recorder.start_recording()
-        
+        # Start system and/or microphone recording as requested
+        # Pass mic_device (if provided) as the sounddevice input device index
+        self.audio_recorder.start_recording(device_index=mic_device, monitor=monitor, monitor_source=monitor_source, mic=mic, system_device_index=system_device)
+
         return str(self.session_path / 'audio')
     
-    def stop_recording(self, label: str = 'recording') -> Optional[str]:
+    def stop_recording(self, label: str = 'recording') -> Optional[list]:
         """Stop audio recording.
         
         Args:
@@ -165,12 +164,17 @@ class Session:
         if not self.audio_recorder:
             return None
         
-        output_path = self.audio_recorder.stop_recording(label)
-        
-        if output_path:
-            self.audio_files.append(output_path)
-        
-        return output_path
+        output_paths = self.audio_recorder.stop_recording(label)
+
+        if output_paths:
+            # output_paths may be a list of file paths
+            if isinstance(output_paths, list):
+                for p in output_paths:
+                    self.audio_files.append(p)
+            else:
+                self.audio_files.append(output_paths)
+
+        return output_paths
     
     def capture_screenshot(self, label: str = 'screenshot') -> str:
         """Capture a screenshot.

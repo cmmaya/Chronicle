@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QMainWindow, QMenuBar, QWidget, QVBoxLayout, 
                                QHBoxLayout, QPushButton, QLabel, QStatusBar,
-                               QMessageBox)
+                               QMessageBox, QCheckBox, QComboBox)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction
 
@@ -30,6 +30,10 @@ class MainWindow(QMainWindow):
         self._create_menu_bar()
         self._create_central_widget()
         self._create_status_bar()
+        # Timer to poll recorder status while recording
+        self._status_timer = QTimer()
+        self._status_timer.setInterval(500)  # ms
+        self._status_timer.timeout.connect(self._poll_capture_status)
         
         # Initialize session manager
         self._init_session_manager(sessions_path)
@@ -50,6 +54,102 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.status_label.setText(f'Error: {str(e)}')
             QMessageBox.critical(self, 'Error', f'Failed to initialize: {str(e)}')
+
+    def _load_settings(self):
+        if not getattr(self, '_settings', None):
+            return
+        try:
+            mic = self._settings.value('record_microphone', True, type=bool)
+            system = self._settings.value('record_system', True, type=bool)
+            mic_index = self._settings.value('mic_device_index', -1, type=int)
+            system_index = self._settings.value('system_device_index', -1, type=int)
+            self.mic_checkbox.setChecked(bool(mic))
+            self.system_checkbox.setChecked(bool(system))
+            # mic_device_selector will be set after population
+            self._saved_mic_index = mic_index
+            self._saved_system_index = system_index
+        except Exception:
+            self._saved_mic_index = -1
+            self._saved_system_index = -1
+
+    def _save_settings(self):
+        if not getattr(self, '_settings', None):
+            return
+        try:
+            self._settings.setValue('record_microphone', self.mic_checkbox.isChecked())
+            self._settings.setValue('record_system', self.system_checkbox.isChecked())
+            self._settings.setValue('mic_device_index', self.mic_device_selector.currentData() or -1)
+            self._settings.setValue('system_device_index', self.system_device_selector.currentData() or -1)
+            self._settings.sync()
+        except Exception:
+            pass
+
+    def _populate_mic_devices(self):
+        # Try to populate input devices via sounddevice
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            self.mic_device_selector.clear()
+            added = False
+            for idx, dev in enumerate(devices):
+                try:
+                    if dev.get('max_input_channels', 0) > 0:
+                        name = f"{dev.get('name')} (idx={idx})"
+                        self.mic_device_selector.addItem(name, idx)
+                        added = True
+                except Exception:
+                    continue
+            if added:
+                self.mic_device_selector.setEnabled(True)
+                # restore saved index if any
+                try:
+                    if getattr(self, '_saved_mic_index', -1) is not None and int(self._saved_mic_index) >= 0:
+                        # find matching index in combobox data
+                        for i in range(self.mic_device_selector.count()):
+                            if self.mic_device_selector.itemData(i) == int(self._saved_mic_index):
+                                self.mic_device_selector.setCurrentIndex(i)
+                                break
+                except Exception:
+                    pass
+            else:
+                self.mic_device_selector.setEnabled(False)
+        except Exception:
+            # sounddevice not available or query failed
+            self.mic_device_selector.clear()
+            self.mic_device_selector.setEnabled(False)
+
+    def _populate_system_devices(self):
+        # Populate candidate system capture devices (loopback / stereo mix)
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            self.system_device_selector.clear()
+            added = False
+            for idx, dev in enumerate(devices):
+                try:
+                    name = str(dev.get('name', '')).lower()
+                    # Candidate: input-capable devices that mention loopback/stereo mix or wave out
+                    if dev.get('max_input_channels', 0) > 0 and ('loopback' in name or 'stereo mix' in name or 'wave out' in name or 'loop back' in name):
+                        disp = f"{dev.get('name')} (idx={idx})"
+                        self.system_device_selector.addItem(disp, idx)
+                        added = True
+                except Exception:
+                    continue
+            if added:
+                self.system_device_selector.setEnabled(True)
+                try:
+                    if getattr(self, '_saved_system_index', -1) is not None and int(self._saved_system_index) >= 0:
+                        for i in range(self.system_device_selector.count()):
+                            if self.system_device_selector.itemData(i) == int(self._saved_system_index):
+                                self.system_device_selector.setCurrentIndex(i)
+                                break
+                except Exception:
+                    pass
+            else:
+                self.system_device_selector.setEnabled(False)
+        except Exception:
+            self.system_device_selector.clear()
+            self.system_device_selector.setEnabled(False)
     
     def _create_menu_bar(self):
         """Create the application menu bar."""
@@ -112,6 +212,59 @@ class MainWindow(QMainWindow):
         session_layout.addWidget(self.session_name_input)
         session_layout.addStretch()
         layout.addLayout(session_layout)
+
+        # Microphone capture checkbox
+        mic_layout = QHBoxLayout()
+        mic_layout.addStretch()
+        self.mic_checkbox = QCheckBox('Record microphone')
+        self.mic_checkbox.setChecked(True)
+        mic_layout.addWidget(self.mic_checkbox)
+        # Microphone device selector
+        self.mic_device_selector = QComboBox()
+        self.mic_device_selector.setEnabled(False)
+        mic_layout.addWidget(self.mic_device_selector)
+        # Microphone status indicator
+        self.mic_status_label = QLabel('')
+        mic_layout.addWidget(self.mic_status_label)
+        mic_layout.addStretch()
+        layout.addLayout(mic_layout)
+
+        # System audio capture checkbox
+        system_layout = QHBoxLayout()
+        system_layout.addStretch()
+        self.system_checkbox = QCheckBox('Record system audio')
+        self.system_checkbox.setChecked(True)
+        system_layout.addWidget(self.system_checkbox)
+        # System device selector
+        self.system_device_selector = QComboBox()
+        self.system_device_selector.setEnabled(False)
+        system_layout.addWidget(self.system_device_selector)
+        # System status indicator
+        self.system_status_label = QLabel('')
+        system_layout.addWidget(self.system_status_label)
+        system_layout.addStretch()
+        layout.addLayout(system_layout)
+
+        # Load persisted settings
+        try:
+            from PySide6.QtCore import QSettings
+            self._settings = QSettings('Chronicle', 'ChronicleApp')
+        except Exception:
+            self._settings = None
+
+        self._load_settings()
+        # Populate devices asynchronously (best-effort)
+        self._populate_mic_devices()
+        self._populate_system_devices()
+
+        # Save settings on change
+        try:
+            self.mic_checkbox.stateChanged.connect(self._save_settings)
+            self.system_checkbox.stateChanged.connect(self._save_settings)
+            self.mic_device_selector.currentIndexChanged.connect(self._save_settings)
+            self.system_device_selector.currentIndexChanged.connect(self._save_settings)
+        except Exception:
+            pass
         
         # Spacer
         layout.addStretch()
@@ -157,6 +310,43 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage('Ready')
+
+    def _update_capture_status(self, mic_ok: bool, sys_ok: bool):
+        """Update visual indicators for mic/system capture status.
+
+        mic_ok/sys_ok: booleans indicating whether recording streams/processes are active
+        """
+        try:
+            if mic_ok:
+                self.mic_status_label.setText('●')
+                self.mic_status_label.setStyleSheet('color: green;')
+            else:
+                self.mic_status_label.setText('○')
+                self.mic_status_label.setStyleSheet('color: red;')
+
+            if sys_ok:
+                self.system_status_label.setText('●')
+                self.system_status_label.setStyleSheet('color: green;')
+            else:
+                self.system_status_label.setText('○')
+                self.system_status_label.setStyleSheet('color: red;')
+        except Exception:
+            pass
+
+    def _poll_capture_status(self):
+        """Poll the current recorder and refresh capture indicators."""
+        try:
+            recorder = None
+            if self.session_manager and self.session_manager.current_session:
+                recorder = self.session_manager.current_session.audio_recorder
+            mic_ok = False
+            sys_ok = False
+            if recorder:
+                mic_ok = getattr(recorder, 'stream', None) is not None
+                sys_ok = (getattr(recorder, 'process', None) is not None) or (getattr(recorder, 'system_stream', None) is not None)
+            self._update_capture_status(mic_ok, sys_ok)
+        except Exception:
+            pass
     
     def _update_ui_state(self):
         """Update UI based on current session state."""
@@ -193,7 +383,41 @@ class MainWindow(QMainWindow):
             session_name = f"Session {now.strftime('%Y-%m-%d %H:%M')}"
             
             # Start session via manager (auto-starts recording)
-            self.session_manager.start_session(session_name, auto_record=True)
+            mic = bool(self.mic_checkbox.isChecked()) if self.mic_checkbox is not None else True
+            system = bool(self.system_checkbox.isChecked()) if self.system_checkbox is not None else True
+
+            mic_device = None
+            try:
+                mic_device = self.mic_device_selector.currentData()
+            except Exception:
+                mic_device = None
+
+            system_device = None
+            try:
+                system_device = self.system_device_selector.currentData()
+            except Exception:
+                system_device = None
+
+            self.session_manager.start_session(session_name, auto_record=True, mic=mic, mic_device=mic_device, system_device=system_device)
+
+            # Update capture status indicator based on recorder state
+            try:
+                recorder = None
+                if self.session_manager and self.session_manager.current_session:
+                    recorder = self.session_manager.current_session.audio_recorder
+                mic_ok = False
+                sys_ok = False
+                if recorder:
+                    mic_ok = getattr(recorder, 'stream', None) is not None
+                    sys_ok = (getattr(recorder, 'process', None) is not None) or (getattr(recorder, 'system_stream', None) is not None)
+                self._update_capture_status(mic_ok, sys_ok)
+            except Exception:
+                pass
+            # start polling status
+            try:
+                self._status_timer.start()
+            except Exception:
+                pass
             
             # Update UI
             self._update_ui_state()
@@ -208,6 +432,16 @@ class MainWindow(QMainWindow):
         try:
             # Stop recording first
             self.session_manager.stop_recording(label='main')
+            # stop polling status
+            try:
+                self._status_timer.stop()
+            except Exception:
+                pass
+            # reset indicators
+            try:
+                self._update_capture_status(False, False)
+            except Exception:
+                pass
             
             # Stop session (this triggers transcription via the manager)
             session = self.session_manager.stop_session()
