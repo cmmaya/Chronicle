@@ -10,7 +10,13 @@ from typing import List, Dict
 logger = logging.getLogger(__name__)
 
 class AudioRecorder:
-    def __init__(self, session_path: str = '/tmp/sessions/session_001'):
+    def __init__(self, session_path: str = '/tmp/sessions/session_001', source: str = 'mic'):
+        """Initialize AudioRecorder for a specific audio source.
+        
+        Args:
+            session_path: Base path for the session
+            source: Audio source ('mic' or 'system')
+        """
         self.is_recording = False
         self.frames = []
         self.sample_rate = 44100
@@ -18,8 +24,12 @@ class AudioRecorder:
         self.device_index = None  # System default
         self.start_time = None
         self.process = None
+        
+        # Track which source this recorder handles
+        self.source = source
+        
         self.session_path = Path(session_path)
-        self.audio_path = self.session_path / 'audio'
+        self.audio_path = self.session_path / 'audio' / source
         self.audio_path.mkdir(parents=True, exist_ok=True)
 
     @staticmethod

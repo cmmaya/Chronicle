@@ -1,8 +1,21 @@
 # Current State
 
 ## Execution Status
-- Current BU: BU007
-- Next BU: BU008
+- Current BU: BU010
+- Next BU: BU011
+
+## Target Architecture
+
+The current development effort is focused on refactoring the audio capture and transcription pipeline to support dual-source synchronized transcription.
+
+The new architecture will:
+1.  Independently capture microphone and system audio.
+2.  Record audio in 10-second, timestamped chunks to preserve temporal order.
+3.  Use a `soundcard`-based loopback mechanism for system audio.
+4.  Transcribe audio chunks from each source independently.
+5.  Merge the transcriptions into a single, chronologically ordered document.
+
+This will replace the existing single-stream recording mechanism and will be implemented across BUs 008-012.
 
 ## Completed BUs
 BU003 - Audio Recording
@@ -10,6 +23,9 @@ BU004 - Screenshot Capture
 BU005 - Parakeet Transcription
 BU006 - Session Management
 BU007 - Summary Generation
+BU008 - Refactor Audio Capture for Dual Sources
+BU009 - Chunked Audio Recording
+BU010 - System Audio Capture
 
 ## In Progress BUs
 None
@@ -22,7 +38,7 @@ None
 
 ## Working Memory
 - Fresh repository
-- Requirements.txt contains PySide6==6.6.0, mss==10.0.0, parakeet-ctc==0.0.3, requests>=2.31.0
+- Requirements.txt contains PySide6==6.6.0, mss==10.0.0, parakeet-ctc==0.0.3, requests>=2.31.0, soundcard>=0.12.0, soundfile>=0.12.0
 - AudioRecorder class implemented and functional
 - Microphone recording working with system default device
 - Audio device selection issue resolved (was using non-existent device 7)
@@ -45,3 +61,12 @@ None
 - Summary templates (key_points, action_items, decisions, full)
 - Summaries stored in database summaries table
 - Supports Gemini Flash and DeepSeek models
+- AudioRecorder now accepts source parameter ('mic' or 'system')
+- Audio files save to session_path/audio/<source>/ subdirectories
+- Session creates audio/mic/ and audio/system/ directories on init
+- Architecture ready for independent system audio recorder
+- ChunkedAudioRecorder class with 10-second WAV chunk recording
+- AudioChunk class for metadata (source, chunk_id, timestamps, file_path)
+- DualSourceChunkedRecorder for simultaneous mic/system capture
+- Metadata saved as JSON alongside each audio chunk
+- SystemAudioRecorder class using soundcard loopback for system audio capture

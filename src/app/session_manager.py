@@ -84,7 +84,7 @@ class SessionManager:
         )
         
         # Initialize components
-        session.audio_recorder = self.audio_recorder_factory(str(session_path))
+        session.audio_recorder = self.audio_recorder_factory(str(session_path), source='mic')
         session.screenshot_capture = self.screenshot_capture_factory(
             str(session_path), 
             db=self.db
@@ -130,7 +130,7 @@ class SessionManager:
             session.end_time = datetime.fromtimestamp(db_session['end_time'])
         
         # Initialize components
-        session.audio_recorder = self.audio_recorder_factory(str(session_path))
+        session.audio_recorder = self.audio_recorder_factory(str(session_path), source='mic')
         session.screenshot_capture = self.screenshot_capture_factory(
             str(session_path),
             db=self.db

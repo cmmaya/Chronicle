@@ -59,6 +59,8 @@ class Session:
         """Create session directory structure if it doesn't exist."""
         self.session_path.mkdir(parents=True, exist_ok=True)
         (self.session_path / 'audio').mkdir(parents=True, exist_ok=True)
+        (self.session_path / 'audio' / 'mic').mkdir(parents=True, exist_ok=True)
+        (self.session_path / 'audio' / 'system').mkdir(parents=True, exist_ok=True)
         (self.session_path / 'screenshots').mkdir(parents=True, exist_ok=True)
         (self.session_path / 'transcripts').mkdir(parents=True, exist_ok=True)
     
@@ -130,15 +132,16 @@ class Session:
         
         logger.info(f'Session {self.id} stopped: {self.name}')
     
-    def start_recording(self, label: str = 'recording', monitor: bool = False) -> str:
+    def start_recording(self, label: str = 'recording', monitor: bool = False, source: str = 'mic') -> str:
         """Start audio recording.
         
         Args:
             label: Label for the recording
             monitor: Whether to record system audio
+            source: Audio source ('mic' or 'system')
             
         Returns:
-            Path to the recording file
+            Path to the audio directory for the specified source
         """
         if not self.audio_recorder:
             raise RuntimeError('Audio recorder not configured')
@@ -151,7 +154,8 @@ class Session:
         else:
             self.audio_recorder.start_recording()
         
-        return str(self.session_path / 'audio')
+        # Return the source-specific audio directory
+        return str(self.session_path / 'audio' / source)
     
     def stop_recording(self, label: str = 'recording') -> Optional[str]:
         """Stop audio recording.

@@ -149,3 +149,51 @@ Recovery Notes:
 - Ready for BU008 integration with Notion sync
 - API key required for OpenRouter (set via SummaryGenerator constructor)
 - Mock mode could be added for testing without API key
+
+---
+
+## BU009 - Chunked Audio Recording
+
+Summary:
+Implemented chunked audio recording with 10-second WAV chunks and metadata. Created AudioChunk dataclass for metadata management and ChunkedAudioRecorder class for continuous chunked capture. DualSourceChunkedRecorder coordinates simultaneous mic/system recording.
+
+Files Changed:
+- src/audio_capture/__init__.py (new)
+- src/audio_capture/core.py (new)
+- src/audio_capture/chunk.py (new)
+
+Important Decisions:
+- AudioChunk uses dataclass with ISO timestamp strings for serialization
+- Metadata saved as JSON file alongside each audio chunk
+- ChunkedAudioRecorder uses threading for background chunk processing
+- Samples per chunk calculated as sample_rate * chunk_duration
+
+Recovery Notes:
+- Ready for BU010 to process chunks in transcriber
+- Uses existing AudioRecorder for underlying audio capture
+- Handles both mic and system sources in same manner
+
+---
+
+## BU010 - System Audio Capture
+
+Summary:
+Implemented system audio capture using soundcard loopback functionality. Added soundcard and soundfile dependencies, created SystemAudioRecorder class for loopback capture, and integrated it into the ChunkedAudioRecorder architecture. The system audio now uses the same chunking mechanism as microphone audio, saving 10-second timestamped chunks with metadata to the audio/system/ directory.
+
+Files Changed:
+- requirements.txt (added soundcard, soundfile)
+- src/audio_capture/system_recorder.py (new)
+- src/audio_capture/core.py (modified ChunkedAudioRecorder)
+- src/audio_capture/__init__.py (updated exports)
+
+Important Decisions:
+- SystemAudioRecorder uses soundcard library's loopback functionality
+- Auto-detects default speaker and uses its loopback microphone
+- Uses buffer-based approach (poll every 500ms)不同于 sounddevice的callback方式
+- Same chunking mechanism as mic for consistency
+- ChunkedAudioRecorder now routes to appropriate recorder based on source type
+
+Recovery Notes:
+- Ready for BU011 to process system audio chunks in transcriber
+- Both microphone and system audio now independently capturable
+- DualSourceChunkedRecorder coordinates simultaneous capture
