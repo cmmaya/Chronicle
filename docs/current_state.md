@@ -1,8 +1,8 @@
 # Current State
 
 ## Execution Status
-- Current BU: BU010
-- Next BU: BU011
+- Current BU: BU012
+- Next BU: BU013
 
 ## Target Architecture
 
@@ -26,6 +26,8 @@ BU007 - Summary Generation
 BU008 - Refactor Audio Capture for Dual Sources
 BU009 - Chunked Audio Recording
 BU010 - System Audio Capture
+BU011 - Chunk-Based Transcription
+BU012 - Fix Transcription Pipeline to Use Real Speech-to-Text Model
 
 ## In Progress BUs
 None
@@ -38,7 +40,7 @@ None
 
 ## Working Memory
 - Fresh repository
-- Requirements.txt contains PySide6==6.6.0, mss==10.0.0, parakeet-ctc==0.0.3, requests>=2.31.0, soundcard>=0.12.0, soundfile>=0.12.0
+- Requirements.txt contains PySide6==6.6.0, mss==10.0.0, parakeet-ctc==0.0.3, requests>=2.31.0, soundcard>=0.12.0, soundfile>=0.12.0, coqui-stt
 - AudioRecorder class implemented and functional
 - Microphone recording working with system default device
 - Audio device selection issue resolved (was using non-existent device 7)
@@ -51,7 +53,7 @@ None
 - Screenshots saved as PNG with timestamp metadata
 - Screenshot metadata stored in database screenshots table
 - Keyboard shortcuts registered via QShortcut (Ctrl+Shift+S, Ctrl+Shift+R)
-- ParakeetV3 transcription engine integrated with mock fallback
+- ParakeetV3 transcription engine integrated - now raises error if model unavailable
 - TranscriptionProcessor class for batch processing
 - Transcript storage methods added to database
 - Session class for meeting lifecycle management
@@ -70,3 +72,11 @@ None
 - DualSourceChunkedRecorder for simultaneous mic/system capture
 - Metadata saved as JSON alongside each audio chunk
 - SystemAudioRecorder class using soundcard loopback for system audio capture
+- TranscriptionProcessor scans audio/mic/ and audio/system/ directories independently
+- Chunk tracking to avoid re-transcription of processed chunks
+- get_new_chunks() method returns only unprocessed audio chunks
+- process_new_chunks() processes chunks incrementally
+- Polling support for continuous transcription during recording
+- start_polling() / stop_polling() for real-time chunk processing
+- Transcribe now raises ModelLoadError instead of fallback to mock
+- coqui-stt dependency added to requirements.txt

@@ -197,3 +197,47 @@ Recovery Notes:
 - Ready for BU011 to process system audio chunks in transcriber
 - Both microphone and system audio now independently capturable
 - DualSourceChunkedRecorder coordinates simultaneous capture
+
+---
+
+## BU011 - Chunk-Based Transcription
+
+Summary:
+Refactored the TranscriptionProcessor to work with chunked audio from dual sources. Added chunk tracking to avoid re-transcription, new methods for incremental processing, and polling support for real-time transcription as chunks appear.
+
+Files Changed:
+- src/transcription/processor.py (modified)
+
+Important Decisions:
+- Scans audio/mic/ and audio/system/ directories separately
+- Uses in-memory set to track processed chunks (avoids re-transcription)
+- Added get_new_chunks() for incremental processing
+- Added polling loop for continuous transcription during recording
+
+Recovery Notes:
+- Ready for BU012 to merge and order transcripts chronologically
+- Source attribution preserved in database (mic vs system)
+- Timestamps extracted from chunk metadata for synchronization
+
+---
+
+## BU012 - Fix Transcription Pipeline to Use Real Speech-to-Text Model
+
+Summary:
+Fixed the transcription pipeline to use a real speech-to-text model instead of silently falling back to mock transcriptions. The pipeline now raises a clear ModelLoadError if neither parakeet-ctc nor coqui-stt can be loaded.
+
+Files Changed:
+- src/transcription/parakeet.py (modified)
+- src/transcription/processor.py (modified)
+- requirements.txt (added coqui-stt)
+
+Important Decisions:
+- Removed mock fallback in ParakeetV3.load() - now raises ModelLoadError if no model available
+- Removed _mock_transcribe() method entirely
+- Added ModelLoadError handling in TranscriptionProcessor methods
+- Added coqui-stt as alternative dependency in requirements.txt
+
+Recovery Notes:
+- Ready for BU013 to implement temporal merge layer for transcripts
+- Application will now fail with clear error if STT model cannot be loaded
+- Users must install either parakeet-ctc or coqui-stt package and download model files

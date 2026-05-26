@@ -5,3 +5,8 @@ soundcard>=0.4.0
 soundfile>=0.12.0
 sounddevice>=0.4.0
 numpy<2
+coqui-stt; python_version < "3.12"  # Optional: install manually on supported Python versions
+
+# Note: coqui-stt may not provide wheels for newer Python versions (e.g. 3.12+).
+# If pip fails with "No matching distribution", install a compatible Python
+# runtime (e.g. 3.10 or 3.11) or use an alternative STT backend (parakeet-ctc).

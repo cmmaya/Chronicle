@@ -1,11 +1,13 @@
 """Transcription processor for handling audio transcription workflow."""
 import logging
+import os
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 import glob as glob_module
+import threading
 
-from .parakeet import ParakeetV3, ParakeetError
+from .parakeet import ParakeetV3, ParakeetError, ModelLoadError
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +37,37 @@ class TranscriptionProcessor:
         """
         self.session_path = Path(session_path)
         self.audio_path = self.session_path / 'audio'
+        # Separate paths for mic and system audio
+        self.mic_audio_path = self.audio_path / 'mic'
+        self.system_audio_path = self.audio_path / 'system'
         self.db = db
         self.parakeet = ParakeetV3(model_path=model_path, scorer_path=scorer_path)
         self._is_loaded = False
+        
+        # Track processed chunks to avoid re-transcription
+        self._processed_chunks: Set[str] = set()
+        
+        # Polling state for continuous chunk processing
+        self._is_polling = False
+        self._polling_thread: Optional[threading.Thread] = None
+        self._stop_polling_event = threading.Event()
     
     def load_model(self) -> None:
-        """Load Parakeet model."""
+        """Load Parakeet model.
+        
+        Raises:
+            ModelLoadError: If model cannot be loaded
+        """
         if self._is_loaded:
             return
-        self.parakeet.load()
-        self._is_loaded = True
-        logger.info("TranscriptionProcessor model loaded")
+        
+        try:
+            self.parakeet.load()
+            self._is_loaded = True
+            logger.info("TranscriptionProcessor model loaded")
+        except ModelLoadError as e:
+            logger.error(f"Failed to load transcription model: {str(e)}")
+            raise
     
     def _get_audio_files(self, source: Optional[str] = None) -> List[Path]:
         """Get list of audio files in session directory.
@@ -59,15 +81,19 @@ class TranscriptionProcessor:
         if not self.audio_path.exists():
             return []
         
-        # Get all WAV files
-        pattern = str(self.audio_path / '*.wav')
-        files = glob_module.glob(pattern)
-        
-        # Filter by source if specified
+        # Determine which directory(s) to scan
         if source == self.SOURCE_MICROPHONE:
-            files = [f for f in files if '_system' not in f]
+            dirs_to_scan = [self.mic_audio_path] if self.mic_audio_path.exists() else []
         elif source == self.SOURCE_SYSTEM:
-            files = [f for f in files if '_system' in f]
+            dirs_to_scan = [self.system_audio_path] if self.system_audio_path.exists() else []
+        else:
+            dirs_to_scan = [d for d in [self.mic_audio_path, self.system_audio_path] if d.exists()]
+        
+        # Collect all WAV files from directories
+        files = []
+        for audio_dir in dirs_to_scan:
+            pattern = str(audio_dir / '*.wav')
+            files.extend(glob_module.glob(pattern))
         
         # Sort by modification time (oldest first)
         files.sort(key=lambda f: Path(f).stat().st_mtime)
@@ -121,6 +147,7 @@ class TranscriptionProcessor:
             
         Raises:
             ParakeetError: If transcription fails
+            ModelLoadError: If model cannot be loaded
         """
         if not self._is_loaded:
             self.load_model()
@@ -167,6 +194,9 @@ class TranscriptionProcessor:
                 result = self._transcribe_and_store(audio_file, session_id, source)
                 if result:
                     results.append(result)
+            except ModelLoadError as e:
+                logger.error(f"Failed to load transcription model for {audio_file}: {str(e)}")
+                raise
             except ParakeetError as e:
                 logger.error(f"Failed to transcribe {audio_file}: {str(e)}")
             except Exception as e:
@@ -216,6 +246,117 @@ class TranscriptionProcessor:
         except ParakeetError as e:
             logger.error(f"Transcription failed for {audio_file}: {str(e)}")
             return None
+    
+    def _mark_chunk_processed(self, filepath: str) -> None:
+        """Mark a chunk as processed to avoid re-transcription.
+        
+        Args:
+            filepath: Path to the audio file that was processed
+        """
+        self._processed_chunks.add(filepath)
+        logger.debug(f"Marked chunk as processed: {filepath}")
+    
+    def _is_chunk_processed(self, filepath: str) -> bool:
+        """Check if a chunk has already been processed.
+        
+        Args:
+            filepath: Path to the audio file
+            
+        Returns:
+            True if already processed, False otherwise
+        """
+        return filepath in self._processed_chunks
+    
+    def get_new_chunks(self, source: str) -> List[Path]:
+        """Get list of new audio chunks that haven't been transcribed.
+        
+        Args:
+            source: Audio source ('microphone' or 'system')
+            
+        Returns:
+            List of unprocessed audio file paths
+        """
+        all_chunks = self._get_audio_files(source)
+        new_chunks = [
+            chunk for chunk in all_chunks
+            if not self._is_chunk_processed(str(chunk))
+        ]
+        
+        if new_chunks:
+            logger.info(f"Found {len(new_chunks)} new chunks for {source}")
+        
+        return new_chunks
+    
+    def get_new_chunks_all(self) -> Dict[str, List[Path]]:
+        """Get new chunks from both sources.
+        
+        Returns:
+            Dictionary with 'microphone' and 'system' lists of new chunks
+        """
+        return {
+            'microphone': self.get_new_chunks(self.SOURCE_MICROPHONE),
+            'system': self.get_new_chunks(self.SOURCE_SYSTEM)
+        }
+    
+    def process_new_chunks(self, session_id: int, source: str) -> List[Dict[str, Any]]:
+        """Process only new chunks from a specific source.
+        
+        This method is designed to be called repeatedly during a session
+        to transcribe chunks as they appear.
+        
+        Args:
+            session_id: Database session ID
+            source: Audio source ('microphone' or 'system')
+            
+        Returns:
+            List of transcription results for new chunks
+        """
+        if not self._is_loaded:
+            self.load_model()
+        
+        new_chunks = self.get_new_chunks(source)
+        results = []
+        
+        for audio_file in new_chunks:
+            filepath_str = str(audio_file)
+            
+            # Skip if already marked as processed (race condition protection)
+            if self._is_chunk_processed(filepath_str):
+                continue
+            
+            try:
+                result = self._transcribe_and_store(audio_file, session_id, source)
+                if result:
+                    # Mark as processed after successful transcription
+                    self._mark_chunk_processed(filepath_str)
+                    results.append(result)
+                    logger.info(f"Transcribed new chunk: {audio_file.name}")
+            except ModelLoadError as e:
+                logger.error(f"Failed to load transcription model for {audio_file}: {str(e)}")
+                raise
+            except ParakeetError as e:
+                logger.error(f"Failed to transcribe {audio_file}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Unexpected error processing {audio_file}: {str(e)}")
+        
+        return results
+    
+    def process_new_chunks_all(self, session_id: int) -> Dict[str, List[Dict[str, Any]]]:
+        """Process new chunks from both sources.
+        
+        Args:
+            session_id: Database session ID
+            
+        Returns:
+            Dictionary with 'microphone' and 'system' lists of results
+        """
+        mic_results = self.process_new_chunks(session_id, self.SOURCE_MICROPHONE)
+        sys_results = self.process_new_chunks(session_id, self.SOURCE_SYSTEM)
+        
+        return {
+            'microphone': mic_results,
+            'system': sys_results
+        }
     
     def process_all(self, session_id: int) -> Dict[str, List[Dict[str, Any]]]:
         """Process all audio files (microphone and system) for a session.
@@ -272,3 +413,89 @@ class TranscriptionProcessor:
         self.parakeet.unload()
         self._is_loaded = False
         logger.info("TranscriptionProcessor model unloaded")
+    
+    def _polling_loop(self, session_id: int, poll_interval: float = 2.0) -> None:
+        """Background polling loop for continuous chunk transcription.
+        
+        Args:
+            session_id: Database session ID
+            poll_interval: Seconds between polls (default 2.0)
+        """
+        import time
+        
+        logger.info(f"Started polling loop (interval={poll_interval}s)")
+        
+        while not self._stop_polling_event.is_set():
+            try:
+                # Process new chunks from both sources
+                results = self.process_new_chunks_all(session_id)
+                
+                total_processed = len(results.get('microphone', [])) + len(results.get('system', []))
+                if total_processed > 0:
+                    logger.info(f"Polling: processed {total_processed} new chunks")
+                    
+            except Exception as e:
+                logger.error(f"Polling error: {str(e)}")
+            
+            # Wait for next poll cycle
+            self._stop_polling_event.wait(poll_interval)
+        
+        logger.info("Stopped polling loop")
+    
+    def start_polling(self, session_id: int, poll_interval: float = 2.0) -> None:
+        """Start continuous chunk polling for real-time transcription.
+        
+        Args:
+            session_id: Database session ID
+            poll_interval: Seconds between polls (default 2.0)
+        """
+        if self._is_polling:
+            logger.warning("Polling already running")
+            return
+        
+        if not self._is_loaded:
+            self.load_model()
+        
+        self._stop_polling_event.clear()
+        self._is_polling = True
+        
+        self._polling_thread = threading.Thread(
+            target=self._polling_loop,
+            args=(session_id, poll_interval),
+            daemon=True
+        )
+        self._polling_thread.start()
+        
+        logger.info(f"Started chunk polling (session_id={session_id}, interval={poll_interval}s)")
+    
+    def stop_polling(self) -> None:
+        """Stop continuous chunk polling."""
+        if not self._is_polling:
+            return
+        
+        logger.info("Stopping chunk polling...")
+        self._stop_polling_event.set()
+        self._is_polling = False
+        
+        if self._polling_thread:
+            self._polling_thread.join(timeout=5.0)
+            self._polling_thread = None
+        
+        logger.info("Stopped chunk polling")
+    
+    @property
+    def is_polling(self) -> bool:
+        """Check if polling is active.
+        
+        Returns:
+            True if polling is running, False otherwise
+        """
+        return self._is_polling
+    
+    def clear_processed_chunks(self) -> None:
+        """Clear the processed chunks tracking.
+        
+        Useful when starting a new transcription session or for testing.
+        """
+        self._processed_chunks.clear()
+        logger.info("Cleared processed chunks tracking")

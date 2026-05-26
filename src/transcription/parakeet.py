@@ -78,12 +78,15 @@ class ParakeetV3:
             except ImportError:
                 pass
             
-            # Final fallback: use mock for testing without model
-            logger.warning("No Parakeet/Coqui model available - using mock transcription")
-            self._model = None
-            self._loaded = True
+            # If we reach here, neither parakeet nor coqui-stt loaded successfully
+            # Raise an error instead of falling back to mock
+            raise ModelLoadError(
+                "Failed to load any speech-to-text model. "
+                "Please install either 'parakeet-ctc' or 'coqui-stt' package "
+                "and download the required model files."
+            )
             
-        except Exception as e:
+        except ModelLoadError:
             raise ModelLoadError(f"Failed to load Parakeet model: {str(e)}")
     
     def is_loaded(self) -> bool:
@@ -171,14 +174,14 @@ class ParakeetV3:
             
         Raises:
             TranscriptionError: If transcription fails
+            ModelLoadError: If model is not loaded
         """
         if not self._loaded:
             self.load()
         
-        # Handle mock mode (no model available)
+        # If we reach here, model must be loaded (load() would have raised otherwise)
         if self._model is None:
-            logger.warning("Running in mock mode - returning placeholder transcription")
-            return self._mock_transcribe(audio_path)
+            raise ModelLoadError("Model failed to load")
         
         try:
             # Load and preprocess audio
@@ -199,18 +202,6 @@ class ParakeetV3:
         except Exception as e:
             raise TranscriptionError(f"Transcription failed: {str(e)}")
     
-    def _mock_transcribe(self, audio_path: str) -> str:
-        """Mock transcription for testing without model.
-        
-        Args:
-            audio_path: Path to audio file (for metadata only)
-            
-        Returns:
-            Placeholder text indicating mock mode
-        """
-        path = Path(audio_path)
-        return f"[Mock transcription for {path.name}]"
-    
     def transcribe_stream(self, audio_chunk: np.ndarray) -> str:
         """Transcribe an audio chunk (for future real-time support).
         
@@ -226,8 +217,9 @@ class ParakeetV3:
         if not self._loaded:
             self.load()
         
+        # Model must be loaded at this point
         if self._model is None:
-            return "[Mock stream transcription]"
+            raise ModelLoadError("Model failed to load")
         
         # Ensure correct format
         if len(audio_chunk.shape) > 1:
@@ -250,7 +242,7 @@ class ParakeetV3:
             "loaded": self._loaded,
             "model_path": self.model_path,
             "scorer_path": self.scorer_path,
-            "model_type": "parakeet_v3" if self._model else "mock"
+            "model_type": "parakeet_v3" if self._model else "none"
         }
         
         if self._model is not None:
