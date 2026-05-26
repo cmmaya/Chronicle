@@ -44,7 +44,7 @@ class Session:
         self.status = self.STATUS_STOPPED
         
         # Component references (set by SessionManager)
-        self.audio_recorder = None
+        self.dual_recorder = None
         self.screenshot_capture = None
         self.transcription_processor = None
         
@@ -76,11 +76,6 @@ class Session:
         # Update database
         if self.db:
             self.db.update_session(self.id, status=self.STATUS_ACTIVE)
-        
-        # Initialize audio recorder
-        if self.audio_recorder:
-            self.audio_recorder.session_path = str(self.session_path)
-            self.audio_recorder.start_time = self.start_time
         
         # Initialize screenshot capture
         if self.screenshot_capture:
@@ -132,30 +127,25 @@ class Session:
         
         logger.info(f'Session {self.id} stopped: {self.name}')
     
-    def start_recording(self, label: str = 'recording', monitor: bool = False, source: str = 'mic') -> str:
+    def start_recording(self, label: str = 'recording') -> str:
         """Start audio recording.
         
         Args:
             label: Label for the recording
-            monitor: Whether to record system audio
-            source: Audio source ('mic' or 'system')
             
         Returns:
-            Path to the audio directory for the specified source
+            Path to the audio directory
         """
-        if not self.audio_recorder:
+        if not self.dual_recorder:
             raise RuntimeError('Audio recorder not configured')
         
         if not self.start_time:
             self.start()
         
-        if monitor:
-            self.audio_recorder.start_recording(monitor=True)
-        else:
-            self.audio_recorder.start_recording()
+        self.dual_recorder.start()
         
-        # Return the source-specific audio directory
-        return str(self.session_path / 'audio' / source)
+        # Return the main audio directory
+        return str(self.session_path / 'audio')
     
     def stop_recording(self, label: str = 'recording') -> Optional[str]:
         """Stop audio recording.
@@ -166,15 +156,16 @@ class Session:
         Returns:
             Path to the saved audio file, or None if not recording
         """
-        if not self.audio_recorder:
+        if not self.dual_recorder:
             return None
         
-        output_path = self.audio_recorder.stop_recording(label)
+        mic_chunks, sys_chunks = self.dual_recorder.stop()
         
-        if output_path:
-            self.audio_files.append(output_path)
+        # We can return the path to the audio directory, as chunks are saved there
+        if mic_chunks or sys_chunks:
+            return str(self.session_path / 'audio')
         
-        return output_path
+        return None
     
     def capture_screenshot(self, label: str = 'screenshot') -> str:
         """Capture a screenshot.

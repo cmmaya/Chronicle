@@ -233,6 +233,7 @@ class ChunkedAudioRecorder:
             
             # Get accumulated audio data
             audio_data_list = self._system_recorder.get_audio_data()
+            logger.info(f"Retrieved {len(audio_data_list) if audio_data_list else 0} buffers from system recorder.")
             
             if audio_data_list:
                 # Initialize chunk start time on first data

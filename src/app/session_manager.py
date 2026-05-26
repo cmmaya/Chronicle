@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from ..storage.database import Database
-from ..audio.recorder import AudioRecorder
+from ..audio_capture.core import DualSourceChunkedRecorder
 from ..screenshots.capture import ScreenshotCapture
 from ..transcription.processor import TranscriptionProcessor
 
@@ -43,7 +43,7 @@ class SessionManager:
         self.current_timeline: Optional[Timeline] = None
         
         # Component factories (can be overridden for testing)
-        self.audio_recorder_factory = AudioRecorder
+        self.dual_recorder_factory = DualSourceChunkedRecorder
         self.screenshot_capture_factory = ScreenshotCapture
         self.transcription_processor_factory = TranscriptionProcessor
     
@@ -84,7 +84,7 @@ class SessionManager:
         )
         
         # Initialize components
-        session.audio_recorder = self.audio_recorder_factory(str(session_path), source='mic')
+        session.dual_recorder = self.dual_recorder_factory(str(session_path))
         session.screenshot_capture = self.screenshot_capture_factory(
             str(session_path), 
             db=self.db
@@ -130,7 +130,7 @@ class SessionManager:
             session.end_time = datetime.fromtimestamp(db_session['end_time'])
         
         # Initialize components
-        session.audio_recorder = self.audio_recorder_factory(str(session_path), source='mic')
+        session.dual_recorder = self.dual_recorder_factory(str(session_path))
         session.screenshot_capture = self.screenshot_capture_factory(
             str(session_path),
             db=self.db
@@ -162,7 +162,7 @@ class SessionManager:
         
         # Auto-start recording if enabled
         if auto_record:
-            self.start_recording(label='main', monitor=False)
+            self.start_recording(label='main')
         
         logger.info(f'Started session {session.id}: {session.name}')
         return session
@@ -223,12 +223,11 @@ class SessionManager:
             start_time = session.start_time or datetime.now()
             self.current_timeline = Timeline(session.id, start_time)
     
-    def start_recording(self, label: str = 'recording', monitor: bool = False) -> str:
+    def start_recording(self, label: str = 'recording') -> str:
         """Start recording audio in the current session.
         
         Args:
             label: Recording label
-            monitor: Whether to record system audio
             
         Returns:
             Path to audio directory
@@ -240,7 +239,7 @@ class SessionManager:
         if self.current_timeline:
             self.current_timeline.add_audio_start(label)
         
-        return self.current_session.start_recording(label, monitor)
+        return self.current_session.start_recording(label)
     
     def stop_recording(self, label: str = 'recording') -> Optional[str]:
         """Stop recording audio in the current session.
