@@ -44,6 +44,8 @@ class ParakeetV3:
         self._model = None
         self._scorer = None
         self._loaded = False
+        self._model_type: Optional[str] = None
+        self._model_name: Optional[str] = None
     
     def load(self) -> None:
         """Load the Parakeet model and scorer.
@@ -54,40 +56,59 @@ class ParakeetV3:
         if self._loaded:
             return
             
+        # Primary: try Whisper first as preferred backend
         try:
-            # Try importing parakeet-ctc (newer package)
-            try:
-                from parakeet import load_model
-                self._model = load_model("parakeet_v3")
-                logger.info("Loaded Parakeet V3 model via parakeet-ctc")
+            import whisper
+            model_name = self.model_path if self.model_path else "small"
+            self._model = whisper.load_model(model_name)
+            self._model_type = 'whisper'
+            self._model_name = model_name
+            logger.info(f"Loaded Whisper model: {model_name}")
+            self._loaded = True
+            return
+        except ImportError:
+            pass
+        except Exception as e:
+            # Whisper present but failed to load
+            raise ModelLoadError(f"Failed to load Whisper model: {str(e)}")
+
+        # Secondary: try parakeet-ctc
+        try:
+            from parakeet import load_model
+            self._model = load_model("parakeet_v3")
+            self._model_type = 'parakeet'
+            self._model_name = 'parakeet_v3'
+            logger.info("Loaded Parakeet V3 model via parakeet-ctc")
+            self._loaded = True
+            return
+        except ImportError:
+            pass
+        except Exception as e:
+            raise ModelLoadError(f"Failed to load Parakeet model: {str(e)}")
+
+        # Tertiary: try coqui-stt
+        try:
+            import coqui_stt
+            if self.model_path:
+                self._model = coqui_stt.Model(self.model_path)
+                if self.scorer_path:
+                    self._model.enableExternalScorer(self.scorer_path)
+                self._model_type = 'coqui'
+                self._model_name = self.model_path
+                logger.info(f"Loaded Coqui STT model from {self.model_path}")
                 self._loaded = True
                 return
-            except ImportError:
-                pass
-            
-            # Fallback: try coqui-stt
-            try:
-                import coqui_stt
-                if self.model_path:
-                    self._model = coqui_stt.Model(self.model_path)
-                    if self.scorer_path:
-                        self._model.enableExternalScorer(self.scorer_path)
-                    logger.info(f"Loaded Coqui STT model from {self.model_path}")
-                    self._loaded = True
-                    return
-            except ImportError:
-                pass
-            
-            # If we reach here, neither parakeet nor coqui-stt loaded successfully
-            # Raise an error instead of falling back to mock
-            raise ModelLoadError(
-                "Failed to load any speech-to-text model. "
-                "Please install either 'parakeet-ctc' or 'coqui-stt' package "
-                "and download the required model files."
-            )
-            
-        except ModelLoadError:
-            raise ModelLoadError(f"Failed to load Parakeet model: {str(e)}")
+        except ImportError:
+            pass
+        except Exception as e:
+            raise ModelLoadError(f"Failed to load Coqui-STT model: {str(e)}")
+
+        # If we reach here, no supported backend loaded
+        raise ModelLoadError(
+            "Failed to load any speech-to-text model. "
+            "Please install a supported STT package (openai-whisper, parakeet-ctc, or coqui-stt) "
+            "and any required model files or dependencies (e.g. PyTorch)."
+        )
     
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
@@ -133,7 +154,8 @@ class ParakeetV3:
                 if sample_rate != 16000:
                     audio = self._resample(audio, sample_rate, 16000)
                 
-                return audio
+                # Ensure float32 dtype for downstream models (Whisper expects float32)
+                return audio.astype(np.float32)
                 
         except wave.Error as e:
             raise TranscriptionError(f"Failed to read audio file: {str(e)}")
@@ -152,7 +174,7 @@ class ParakeetV3:
             Resampled audio array
         """
         if orig_rate == target_rate:
-            return audio
+            return audio.astype(np.float32)
             
         # Calculate new length
         new_length = int(len(audio) * target_rate / orig_rate)
@@ -161,7 +183,8 @@ class ParakeetV3:
         x_orig = np.linspace(0, 1, len(audio))
         x_new = np.linspace(0, 1, new_length)
         
-        return np.interp(x_new, x_orig, audio)
+        # np.interp returns float64 by default; cast to float32 for model compatibility
+        return np.interp(x_new, x_orig, audio).astype(np.float32)
     
     def transcribe(self, audio_path: str) -> str:
         """Transcribe audio file to text.
@@ -185,8 +208,16 @@ class ParakeetV3:
         
         try:
             # Load and preprocess audio
+            # If using Whisper, let it handle audio file directly
+            if getattr(self, '_model_type', None) == 'whisper':
+                # Load audio into numpy array at 16kHz and pass directly to Whisper to avoid ffmpeg dependency
+                audio = self._load_audio_file(audio_path)
+                result = self._model.transcribe(audio)
+                return result.get('text', '')
+
+            # Otherwise, load and preprocess audio for parakeet/coqui
             audio = self._load_audio_file(audio_path)
-            
+
             # Run inference
             try:
                 # Try parakeet-ctc API
@@ -221,6 +252,21 @@ class ParakeetV3:
         if self._model is None:
             raise ModelLoadError("Model failed to load")
         
+        # Whisper: accept numpy audio directly to avoid ffmpeg dependency
+        if getattr(self, '_model_type', None) == 'whisper':
+            try:
+                # Ensure mono
+                if len(audio_chunk.shape) > 1:
+                    audio_chunk = audio_chunk.mean(axis=1)
+
+                # Ensure float32
+                audio_chunk = audio_chunk.astype(np.float32)
+
+                result = self._model.transcribe(audio_chunk)
+                return result.get('text', '')
+            except Exception as e:
+                raise TranscriptionError(f"Stream transcription (Whisper) failed: {str(e)}")
+
         # Ensure correct format
         if len(audio_chunk.shape) > 1:
             audio_chunk = audio_chunk.mean(axis=1)
@@ -242,7 +288,7 @@ class ParakeetV3:
             "loaded": self._loaded,
             "model_path": self.model_path,
             "scorer_path": self.scorer_path,
-            "model_type": "parakeet_v3" if self._model else "none"
+            "model_type": self._model_type if self._model_type else "none"
         }
         
         if self._model is not None:

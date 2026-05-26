@@ -40,7 +40,8 @@ None
 
 ## Working Memory
 - Fresh repository
-- Requirements.txt contains PySide6==6.6.0, mss==10.0.0, parakeet-ctc==0.0.3, requests>=2.31.0, soundcard>=0.12.0, soundfile>=0.12.0, coqui-stt
+-- Requirements.txt contains PySide6==6.6.0, mss==10.0.0, parakeet-ctc==0.0.3, requests>=2.31.0, soundcard>=0.12.0, soundfile>=0.12.0, coqui-stt (conditional), openai-whisper
+  - Note: openai-whisper requires PyTorch; install a compatible torch wheel before installing requirements.txt
 - AudioRecorder class implemented and functional
 - Microphone recording working with system default device
 - Audio device selection issue resolved (was using non-existent device 7)
